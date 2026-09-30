@@ -151,6 +151,20 @@ impl ArgusApp {
                                     continue;
                                 }
                             };
+
+                            if let Ok(meta) = std::fs::metadata(&current_exe) {
+                                let size = meta.len();
+                                if size < 1_000_000 || size > 15_000_000 {
+                                    self.state.set_loading(false, None);
+                                    self.state.set_error(format!(
+                                        "Update aborted: current launcher size ({} bytes) does not match a release build. \
+                                         Delete this launcher and download the latest release manually.",
+                                        size
+                                    ));
+                                    continue;
+                                }
+                            }
+
                             // Run the download + helper-spawn synchronously so we know
                             // it's staged before we exit. The .bat helper will copy the
                             // new exe over us after we exit, then relaunch.
@@ -162,6 +176,17 @@ impl ArgusApp {
                             let result: Result<(), String> = (|| -> Result<(), String> {
                                 let url = crate::argus::update::fetch_latest_asset_url()?;
                                 crate::argus::update::download_asset(&url, &dest)?;
+
+                                if let Ok(meta) = std::fs::metadata(&dest) {
+                                    let size = meta.len();
+                                    if size < 1_000_000 {
+                                        return Err(format!(
+                                            "Downloaded update is too small ({} bytes); aborting.",
+                                            size
+                                        ));
+                                    }
+                                }
+
                                 crate::argus::update::create_update_helper(&current_exe, &dest)?;
                                 Ok(())
                             })();
