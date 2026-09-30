@@ -219,9 +219,11 @@ impl ArgusApp {
                                 }
                                 #[cfg(windows)]
                                 let mut helper = {
-                                    let mut cmd = std::process::Command::new(&helper_path);
-                                    // DETACHED_PROCESS = 0x00000008
-                                    cmd.creation_flags(0x00000008);
+                                    let mut cmd = std::process::Command::new("cmd");
+                                    cmd.arg("/c");
+                                    cmd.arg(&helper_path);
+                                    // CREATE_NO_WINDOW = 0x08000000
+                                    cmd.creation_flags(0x08000000);
                                     cmd
                                 };
                                 let _ = helper.spawn();
