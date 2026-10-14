@@ -1,4 +1,11 @@
 // Windows resource file for era-launcher icon
-#include <windows.h>
-
-IDI_APP_ICON ICON "src/resources/era-launcher.ico"
+//
+// Kept deliberately free of #include <windows.h> so that BOTH resource
+// compilers work:
+//   - rc.exe    (MSVC / Windows SDK, found via the Windows Kits bin dir)
+//   - windres   (GNU, from Git for Windows or MSYS2)
+// GNU windres cannot resolve the MSVC SDK headers, so an #include here made
+// the windres path fail silently and the exe shipped with no icon at all.
+//
+// IDI_APP_ICON is 1. Reference it from Rust with MAKEINTRESOURCEW(1).
+1 ICON "src/resources/era-launcher.ico"

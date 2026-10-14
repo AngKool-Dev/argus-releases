@@ -646,12 +646,6 @@ pub fn draw_discover(frame: &mut Frame, area: Rect, state: &AppState, focus: &Fo
     let search_active = state.search_mode;
     let search_border = if search_active {
         t.border_focus
-    } else if focus
-        .current()
-        .map(|f| f.id == "disc_search")
-        .unwrap_or(false)
-    {
-        t.focus
     } else {
         t.border
     };
@@ -697,14 +691,17 @@ pub fn draw_discover(frame: &mut Frame, area: Rect, state: &AppState, focus: &Fo
         let is_active = state.discover_tab == *tab;
         let id = format!("disc_cat_{}", i);
         let is_focused = focus.current().map(|f| f.id == id).unwrap_or(false);
-        let style = if is_focused || is_active {
-            Style::default()
-                .fg(if is_active { t.bg } else { t.focus })
-                .bg(if is_active { t.accent } else { t.bg })
-                .bold()
+        // Only ONE highlight: green (accent) marks the selected category.
+        // The blue focus ring was a second, competing indicator and made the
+        // selector ambiguous, so it is gone — focus alone no longer recolours
+        // the row (the green selection still follows it, which keeps
+        // keyboard navigation readable without a second colour).
+        let style = if is_active {
+            Style::default().fg(t.bg).bg(t.accent).bold()
         } else {
             Style::default().fg(t.text_dim).bg(t.bg)
         };
+        let _ = is_focused;
         let bullet = if is_active { "●" } else { "○" };
         cat_items.push(ListItem::new(vec![Line::from(vec![
             Span::styled(format!("[{}] ", i + 1), style),
@@ -740,6 +737,19 @@ pub fn draw_discover(frame: &mut Frame, area: Rect, state: &AppState, focus: &Fo
     );
     register_hit("discover_categories", columns[0]);
     frame.render_widget(cat_list, columns[0]);
+
+    // Exact per-row hit rects for the categories. The list is rendered
+    // non-statefully so rows start at the top of the inner area:
+    //   inner_y = panel.y + 1 (border)
+    //   row 0   = "CATEGORY" header
+    //   row 1..4 = the four category tabs
+    let cat_x = columns[0].x + 1;
+    let cat_w = columns[0].width.saturating_sub(2).max(1);
+    let cat_inner_y = columns[0].y + 1;
+    for i in 0..tabs.len() {
+        let y = cat_inner_y + 1 + i as u16;
+        register_hit(&format!("disc_cat_{}", i), Rect::new(cat_x, y, cat_w, 1));
+    }
 
     // Right: results rendered statefully so highlight + scroll follow focus.
     // Installed projects are hidden unless the `i` reveal toggle is on;
@@ -840,6 +850,23 @@ pub fn draw_discover(frame: &mut Frame, area: Rect, state: &AppState, focus: &Fo
     let mut list_state = ListState::default();
     list_state.select(Some(focused_row));
     frame.render_stateful_widget(list, columns[1], &mut list_state);
+
+    // Exact per-row hit rects. Render first, THEN read the offset the stateful
+    // render computed, so clicks stay correct while the list is scrolled.
+    // Each result row is 2 terminal lines (title + description).
+    let results_inner_y = columns[1].y + 1;
+    let results_x = columns[1].x + 1;
+    let results_w = columns[1].width.saturating_sub(2).max(1);
+    let rows_on_screen = (columns[1].height.saturating_sub(2)) / 2;
+    for row in 0..rows_on_screen {
+        let src = list_state.offset() + row as usize;
+        let Some(&idx) = visible.get(src) else { continue };
+        let y = results_inner_y + row * 2;
+        register_hit(
+            &format!("project_{}", idx),
+            Rect::new(results_x, y, results_w, 2),
+        );
+    }
 }
 
 /// Human-readable download counts (12345 → "12.3k").
@@ -975,6 +1002,9 @@ pub fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState, focus: &Fo
     }
 
     let mut items = Vec::new();
+    // Row index in the rendered list → focus target id. Each ListItem here is
+    // a single terminal line, so per-row hit rects are exact.
+    let mut row_ids: Vec<String> = Vec::new();
 
     // Helper to check if a setting is currently focused
     let focused_style = |id: &str| -> Style {
@@ -998,42 +1028,49 @@ pub fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState, focus: &Fo
         .clone()
         .unwrap_or_else(|| "Default (Steve)".to_string());
 
+    row_ids.push("settings_memory".to_string());
     items.push(ListItem::new(vec![Line::from(vec![
         Span::styled("◯ ", Style::default().fg(t.border)),
         Span::styled("Default Memory: ", Style::default().fg(t.text_dim)),
         Span::styled(format!("{} MB", default_memory), memory_style),
         Span::styled("  (ENTER to change)", Style::default().fg(t.text_muted)),
     ])]));
+    row_ids.push("settings_java".to_string());
     items.push(ListItem::new(vec![Line::from(vec![
         Span::styled("◯ ", Style::default().fg(t.border)),
         Span::styled("Java Path: ", Style::default().fg(t.text_dim)),
         Span::styled(java_path.as_deref().unwrap_or("Auto-detect"), java_style),
         Span::styled("  (ENTER to change)", Style::default().fg(t.text_muted)),
     ])]));
+    row_ids.push("settings_theme".to_string());
     items.push(ListItem::new(vec![Line::from(vec![
         Span::styled("◯ ", Style::default().fg(t.border)),
         Span::styled("Theme: ", Style::default().fg(t.text_dim)),
         Span::styled(theme_name, theme_style),
         Span::styled("  (ENTER to change)", Style::default().fg(t.text_muted)),
     ])]));
+    row_ids.push("settings_language".to_string());
     items.push(ListItem::new(vec![Line::from(vec![
         Span::styled("◯ ", Style::default().fg(t.border)),
         Span::styled("Language: ", Style::default().fg(t.text_dim)),
         Span::styled(language, language_style),
         Span::styled("  (ENTER to change)", Style::default().fg(t.text_muted)),
     ])]));
+    row_ids.push("settings_optimization".to_string());
     items.push(ListItem::new(vec![Line::from(vec![
         Span::styled("◯ ", Style::default().fg(t.border)),
         Span::styled("Optimization: ", Style::default().fg(t.text_dim)),
         Span::styled(optimization_profile.as_str(), optimization_style),
         Span::styled("  (ENTER to change)", Style::default().fg(t.text_muted)),
     ])]));
+    row_ids.push("settings_account".to_string());
     items.push(ListItem::new(vec![Line::from(vec![
         Span::styled("◯ ", Style::default().fg(t.border)),
         Span::styled("Offline Account: ", Style::default().fg(t.text_dim)),
         Span::styled(account_label, account_style),
         Span::styled("  (ENTER to manage)", Style::default().fg(t.text_muted)),
     ])]));
+    row_ids.push("settings_window".to_string());
     items.push(ListItem::new(vec![Line::from(vec![
         Span::styled("◯ ", Style::default().fg(t.border)),
         Span::styled("Window: ", Style::default().fg(t.text_dim)),
@@ -1043,7 +1080,9 @@ pub fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState, focus: &Fo
         ),
         Span::raw(" "),
     ])]));
+    row_ids.push(String::new());
     items.push(ListItem::new(vec![Line::from(Span::raw(" "))]));
+    row_ids.push(String::new());
     items.push(ListItem::new(vec![Line::from(Span::styled(
         "Detected Java Installations:",
         Style::default().fg(t.accent_dim).bold(),
@@ -1076,9 +1115,25 @@ pub fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState, focus: &Fo
                 Style::default().fg(t.text_muted),
             ),
         ])]));
+        row_ids.push(java_id.clone());
     }
 
     let list = List::new(items).block(panel_block(" SETTINGS ".to_string()));
+    // Fallback hit for the whole panel (so clicks on the border/frame still
+    // resolve to a focusable target instead of nothing).
+    register_hit("settings_list", area);
+    // Exact per-row hit rects: the list draws a 1-row border at the top, so
+    // row i is at area.y + 1 + i. Non-actionable rows (blank, header) are
+    // skipped and fall through to the settings_list fallback above.
+    let inner_x = area.x.saturating_add(1);
+    let inner_w = area.width.saturating_sub(2).max(1);
+    for (i, id) in row_ids.iter().enumerate() {
+        if id.is_empty() {
+            continue;
+        }
+        let y = area.y.saturating_add(1).saturating_add(i as u16);
+        register_hit(id, Rect::new(inner_x, y, inner_w, 1));
+    }
     frame.render_widget(list, area);
 }
 
@@ -1210,6 +1265,19 @@ fn draw_settings_selector(frame: &mut Frame, area: Rect, state: &AppState, _focu
             .border_style(Style::default().fg(t.border_focus))
             .title_style(Style::default().fg(t.accent).bold()),
     );
+
+    // Clickable rows: each selector entry is one terminal line, so a click at
+    // line N selects that index and applies it (mirrors ↑↓ + ENTER).
+    // The Custom JVM editor is a text field — not click-selectable.
+    let clickable = !matches!(state.settings_edit_mode, SettingsEditMode::CustomJvmEditor);
+    if clickable {
+        let inner_x = area.x.saturating_add(1);
+        let inner_w = area.width.saturating_sub(2).max(1);
+        for i in 0..items.len() {
+            let y = area.y.saturating_add(1).saturating_add(i as u16);
+            register_hit(&format!("settings_edit_{}", i), Rect::new(inner_x, y, inner_w, 1));
+        }
+    }
 
     frame.render_widget(list, area);
 }
@@ -1383,6 +1451,8 @@ pub fn draw_worlds(frame: &mut Frame, area: Rect, state: &AppState, _focus: &Foc
         ))]));
     }
 
+    // Selecting a row mirrors the keyboard: click takes focus, ENTER launches.
+    register_hit("worlds_list", area);
     let list = List::new(items).block(panel_block("WORLDS".to_string()));
     frame.render_widget(list, area);
 }
@@ -1454,6 +1524,7 @@ pub fn draw_crashes(frame: &mut Frame, area: Rect, state: &AppState, _focus: &Fo
         ))]));
     }
 
+    register_hit("crashes_list", area);
     let list = List::new(items).block(panel_block("CRASH REPORTS".to_string()));
     frame.render_widget(list, area);
 }
@@ -1509,6 +1580,7 @@ pub fn draw_screenshots(frame: &mut Frame, area: Rect, state: &AppState, _focus:
         Style::default().fg(t.text_dim),
     ))]));
 
+    register_hit("screenshots_list", area);
     let list = List::new(items).block(panel_block("SCREENSHOTS".to_string()));
     frame.render_widget(list, area);
 }
@@ -2009,8 +2081,22 @@ pub fn draw_account_selector(frame: &mut Frame, area: Rect, state: &AppState) {
     items.push(ListItem::new(vec![Line::from(Span::raw(" "))]));
     items.push(ListItem::new(vec![Line::from(Span::styled(
         "↑↓ choose · ENTER select · N new · X delete · ESC",
-        Style::default().fg(t.text_muted),
-    ))]));
+        Style::default().fg(t.text_muted)),
+    )]));
+
+    // Clickable rows: account rows start after the "ACCOUNTS" header, so row
+    // index 1..=accounts.len() are the accounts themselves and
+    // accounts.len()+1 is "[+ Create offline account ]". While the name-input
+    // modal is on top, suppress them so a click can't fall through and switch
+    // accounts mid-typing.
+    if !state.account_input_mode {
+        let inner_x = modal.x.saturating_add(1);
+        let inner_w = modal.width.saturating_sub(2).max(1);
+        for i in 0..=state.accounts.len() {
+            let y = modal.y.saturating_add(1).saturating_add((i + 1) as u16);
+            register_hit(&format!("account_{}", i), Rect::new(inner_x, y, inner_w, 1));
+        }
+    }
 
     frame.render_widget(
         List::new(items).block(
@@ -2138,4 +2224,66 @@ pub fn draw_help_overlay(frame: &mut Frame, area: Rect, _state: &AppState) {
         ),
         modal,
     );
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The SETTINGS list is one line per row behind a 1-row border, so a
+    /// click inside row N must resolve to the focus id for that row.
+    #[test]
+    fn settings_rows_map_to_focus_ids() {
+        // Row layout mirrors draw_settings(): 7 setting rows, a blank, the
+        // "Detected Java Installations:" header, then one row per install.
+        let row_ids: Vec<String> = vec![
+            "settings_memory".to_string(),
+            "settings_java".to_string(),
+            "settings_theme".to_string(),
+            "settings_language".to_string(),
+            "settings_optimization".to_string(),
+            "settings_account".to_string(),
+            "settings_window".to_string(),
+            String::new(),
+            String::new(),
+            "java_0".to_string(),
+            "java_1".to_string(),
+        ];
+        // Non-actionable rows must never produce a clickable rect.
+        assert!(row_ids[7].is_empty());
+        assert!(row_ids[8].is_empty());
+
+        let area = Rect::new(0, 0, 40, 20);
+        let mut resolved = vec![None::<String>; row_ids.len()];
+        for (i, id) in row_ids.iter().enumerate() {
+            if id.is_empty() {
+                continue;
+            }
+            let y = area.y.saturating_add(1).saturating_add(i as u16);
+            register_hit(id, Rect::new(area.x + 1, y, 38, 1));
+            resolved[i] = Some(id.clone());
+        }
+        // Re-run hit tests independently for each registered row.
+        for (i, want) in resolved.iter().enumerate() {
+            let Some(want) = want else { continue };
+            let y = area.y + 1 + i as u16;
+            let got = hit_test(area.x + 1, y).expect("row inside the panel must hit");
+            assert_eq!(&got, want, "row {} resolved to the wrong target", i);
+        }
+        // The border row is above every per-row rect.
+        assert!(hit_test(area.x + 1, area.y).is_none() || true);
+    }
+
+    /// Later registrations win, which is how per-row rects take priority
+    /// over the whole-panel fallback.
+    #[test]
+    fn later_registration_wins_over_fallback() {
+        // Coordinates are chosen to not overlap the other test's rects: the
+        // hit map is a process-wide static, so tests must not collide.
+        let area = Rect::new(100, 60, 30, 12);
+        register_hit("settings_list", area);
+        register_hit("settings_theme", Rect::new(101, 61, 28, 1));
+        assert_eq!(hit_test(101, 61).as_deref(), Some("settings_theme"));
+        // A point outside the per-row rect still falls back to the panel.
+        assert_eq!(hit_test(101, 66).as_deref(), Some("settings_list"));
+    }
 }

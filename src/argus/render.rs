@@ -8,7 +8,7 @@ use crate::argus::focus::FocusManager;
 use crate::argus::state::AppState;
 use crate::argus::ui;
 use crossterm::ExecutableCommand;
-use crossterm::event::{self, Event as CEvent};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
 use ratatui::prelude::*;
@@ -136,6 +136,7 @@ impl Renderer {
 
         let mut stdout = io::stdout();
         stdout.execute(EnterAlternateScreen)?;
+        stdout.execute(EnableMouseCapture)?;
         terminal::enable_raw_mode()?;
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
@@ -163,6 +164,7 @@ impl Renderer {
     pub fn deinit(&mut self) -> io::Result<()> {
         let mut stdout = io::stdout();
         stdout.execute(LeaveAlternateScreen)?;
+        stdout.execute(DisableMouseCapture)?;
         terminal::disable_raw_mode()?;
         Ok(())
     }

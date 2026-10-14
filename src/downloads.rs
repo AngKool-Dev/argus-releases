@@ -40,7 +40,7 @@ impl DownloadManager {
         let response = self
             .client
             .get(url)
-            .header("User-Agent", "EraLauncher/0.1.5")
+            .header("User-Agent", "EraLauncher/0.2.0")
             .send()
             .await?;
         if !response.status().is_success() {

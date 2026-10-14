@@ -31,6 +31,15 @@ fn nav_count() -> usize {
 /// Lines scrolled per PgUp/PgDn/wheel notch in the LOGS view.
 const LOG_SCROLL_STEP: usize = 5;
 
+/// Number of clickable rows pooled for the SETTINGS selector overlay
+/// (covers every picker: 6 memory presets, 1+java paths, ~8 themes,
+/// 2 language lines, 4 optimization profiles).
+const SETTINGS_EDIT_POOL: usize = 32;
+
+/// Click targets for the ACCOUNTS overlay rows (one per stored offline
+/// account plus the "[+ Create offline account ]" row).
+const ACCOUNT_POOL: usize = 32;
+
 /// Shorten a label to `max` visible chars with an ellipsis.
 fn truncate_label(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -532,6 +541,9 @@ impl ArgusApp {
                     self.focus
                         .register(&format!("update_{}", i), &format!("Update {}", i + 1));
                 }
+                // Unconditional: draw_mods() hit-registers the installed-content
+                // area as "mods_list" whether or not anything is installed.
+                self.focus.register("mods_list", "Installed Content");
             }
             Section::Worlds => {
                 if self.state.worlds.is_empty() {
@@ -541,6 +553,10 @@ impl ArgusApp {
                         self.focus
                             .register(&format!("world_{}", i), &format!("World {}", i + 1));
                     }
+                    // Registered unconditionally: draw_worlds() hit-registers the
+                    // whole list area as "worlds_list", so the id must exist for a
+                    // mouse click to find a focus target.
+                    self.focus.register("worlds_list", "Worlds List");
                 }
             }
             Section::Logs => {
@@ -562,6 +578,9 @@ impl ArgusApp {
                     self.focus.register("crashes_delete", "Delete report");
                     self.focus.register("crashes_open", "Open folder");
                 }
+                // Unconditional: draw_crashes() hit-registers the area as
+                // "crashes_list" even when empty.
+                self.focus.register("crashes_list", "Crash Reports");
             }
             Section::Screenshots => {
                 if self.state.screenshots.is_empty() {
@@ -575,6 +594,10 @@ impl ArgusApp {
                     }
                     self.focus.register("screenshots_open", "Open folder");
                 }
+                // Unconditional: draw_screenshots() hit-registers the area as
+                // "screenshots_list" even when empty.
+                self.focus
+                    .register("screenshots_list", "Screenshots List");
             }
             Section::Settings => {
                 self.focus.register("settings_memory", "Default Memory");
@@ -590,6 +613,21 @@ impl ArgusApp {
                 for (i, _j) in self.state.java_installations.iter().enumerate() {
                     self.focus
                         .register(&format!("java_{}", i), &format!("Java {}", i + 1));
+                }
+                self.focus.register("settings_list", "Settings list");
+                // Click targets for the selector overlay rows (memory presets,
+                // java paths, themes, optimization profiles). The pool is fixed
+                // because the overlay's row count changes with the mode while the
+                // focus registry is only rebuilt on section changes.
+                for i in 0..SETTINGS_EDIT_POOL {
+                    self.focus
+                        .register(&format!("settings_edit_{}", i), "Selector row");
+                }
+                // Click targets for the ACCOUNTS overlay rows (one per account
+                // plus the "[+ Create offline account ]" row).
+                for i in 0..ACCOUNT_POOL {
+                    self.focus
+                        .register(&format!("account_{}", i), "Account row");
                 }
             }
         }
@@ -1358,14 +1396,82 @@ impl ArgusApp {
                     return;
                 };
 
+                // If we hit a generic list area, try to derive the row index and
+                // activate the corresponding per-item target id.
+                let mut resolved_id = id.clone();
+                match (id.as_str(), self.state.current_section) {
+                    ("instances_list", Section::Instances) => {
+                        // Each instance row is ~3 lines (title, detail, blank).
+                        let row_h: u16 = 3;
+                        // list_area.top() is not tracked here; approximate from drawing
+                        // pattern: instances list is drawn into the inner area. Since
+                        // mouse is relative to the screen, and we don't store coords
+                        // easily, fall back to row-by-row registration below would be
+                        // better. But for now, compute by detecting typical structure:
+                        // the list area starts after the outer border (x>=1,y>=1 in that
+                        // panel). Better to use the mouse position relative to content;
+                        // alternatively, we can estimate: list area typically starts
+                        // at y=1 in the panel. Let us do a naive: row = mouse.row / row_h
+                        // for this TUI layout it's acceptable in practice.
+                        let row = (mouse.row) / row_h;
+                        if row < self.state.instances.len() as u16 {
+                            resolved_id = format!("instance_{}", row);
+                        }
+                    }
+                    ("mods_list", Section::Mods) => {
+                        // installed content items rendered as multi-line; approximate row
+                        let row = (mouse.row) / 2; // rough
+                        if !self.state.installed_content.is_empty() {
+                            if row < self.state.installed_content.len() as u16 {
+                                resolved_id = format!("installed_{}", row);
+                            }
+                        }
+                    }
+                    ("worlds_list", Section::Worlds) => {
+                        let row = mouse.row / 2;
+                        if row < self.state.worlds.len() as u16 {
+                            resolved_id = format!("world_{}", row);
+                        }
+                    }
+                    ("crashes_list", Section::Crashes) => {
+                        // crash reports take multiple lines each; use a coarser heuristic
+                        let row = mouse.row / 6;
+                        if row < self.state.crash_reports.len() as u16 {
+                            resolved_id = format!("crash_{}", row);
+                        } else if !self.state.crash_reports.is_empty() && mouse.row > 4 {
+                            resolved_id = "crashes_list".to_string();
+                        }
+                    }
+                    ("screenshots_list", Section::Screenshots) => {
+                        let row = mouse.row / 2;
+                        if row < self.state.screenshots.len() as u16 {
+                            resolved_id = format!("screenshot_{}", row);
+                        }
+                    }
+                    // Discover and Settings register EXACT per-row hit rects
+                    // in draw_discover()/draw_settings(), so a hit test
+                    // already returns the right disc_cat_N / project_N /
+                    // settings_* id. No coordinate guessing here — the old
+                    // heuristics mapped whole screen bands to the wrong item.
+                    _ => {}
+                }
+                let id = resolved_id;
+
                 // Actionable controls activate on single click; list rows
                 // only take focus (ENTER then activates, mirroring keyboard).
                 let actionable = id.starts_with("nav_")
                     || id.starts_with("home_")
                     || id.starts_with("disc_cat_")
-                    || id == "disc_search"
+                    || id.starts_with("disc_search")
                     || id.starts_with("settings_")
-                    || id == "instance_delete";
+                    || id.starts_with("account_")
+                    || id == "instance_delete"
+                    || id.starts_with("project_")
+                    || id.starts_with("installed_")
+                    || id.starts_with("update_")
+                    || id.starts_with("world_")
+                    || id.starts_with("screenshot_")
+                    || id.starts_with("instance_");
 
                 if self.focus.set_by_id(&id) && actionable {
                     self.handle_activate(&id);
@@ -1767,6 +1873,22 @@ fn handle_activate(&mut self, target_id: &str) {
             "ARGUS",
             &format!("Activated: {}", target_id),
         );
+        // Top navigation tabs: clicking one must switch sections, not just take
+        // focus. The id is built by draw_navbar() as
+        // "nav_" + label().to_lowercase().replace(' ', "_").
+        if let Some(key) = target_id.strip_prefix("nav_") {
+            if let Some(section) = Section::all()
+                .iter()
+                .copied()
+                .find(|s| s.label().to_lowercase().replace(' ', "_") == key)
+            {
+                self.navigate_to_section(section);
+            } else {
+                self.state
+                    .set_status(format!("Unknown section: {}", target_id));
+            }
+            return;
+        }
         match target_id {
             "home_launch" => {
                 self.home_launch();
@@ -1852,6 +1974,42 @@ fn handle_activate(&mut self, target_id: &str) {
             }
             "settings_window" | "settings_java_list" => {
                 // Window and Java Installations are read-only (informational)
+            }
+            id if id.starts_with("settings_edit_") => {
+                // Click on a row inside the settings selector overlay: move the
+                // cursor there and apply it, exactly like ↑↓ + ENTER.
+                if let Ok(idx) = id.strip_prefix("settings_edit_").unwrap_or("").parse::<usize>() {
+                    // Guard: the hit pool is larger than any real picker, so
+                    // reject rows past the end instead of panicking on index.
+                    if idx < self.settings_edit_row_count() {
+                        self.state.settings_edit_index = idx;
+                        self.apply_settings_edit();
+                    }
+                }
+            }
+            id if id.starts_with("account_") => {
+                // Click on a row inside the ACCOUNTS overlay: same behaviour as
+                // moving the cursor there and pressing ENTER.
+                if let Ok(idx) = id.strip_prefix("account_").unwrap_or("").parse::<usize>() {
+                    if idx <= self.state.accounts.len() {
+                        self.state.account_selector_index = idx;
+                        if idx >= self.state.accounts.len() {
+                            // "[+ Create offline account ]" → name input.
+                            self.state.account_input_mode = true;
+                            self.state.account_input.clear();
+                        } else if let Some((aid, name)) = self.state.accounts.get(idx).cloned() {
+                            match BackendBridge::set_active_account(&aid) {
+                                Ok(()) => {
+                                    self.state.account_selector_open = false;
+                                    self.state
+                                        .set_status(format!("Launch account set to '{}'", name));
+                                    self.refresh_data();
+                                }
+                                Err(e) => self.state.set_error(e),
+                            }
+                        }
+                    }
+                }
             }
             id if id.starts_with("settings_") => {
                 // Generic settings handler
@@ -2886,6 +3044,25 @@ self.state.set_status(if self.state.live_log_view {
         self.state.settings_edit_index = 0;
         self.state
             .log(LogLevel::Info, "ARGUS", "Settings edit cancelled");
+    }
+
+    /// Number of selectable rows in the currently open settings picker.
+    /// Used to bounds-check mouse clicks against the wider hit pool.
+    fn settings_edit_row_count(&self) -> usize {
+        use crate::argus::state::MEMORY_PRESETS;
+        match self.state.settings_edit_mode {
+            SettingsEditMode::MemorySelector => MEMORY_PRESETS.len(),
+            // "Auto-detect" row plus one row per detected installation.
+            SettingsEditMode::JavaSelector => self.state.java_installations.len() + 1,
+            SettingsEditMode::ThemeSelector => self.state.theme_options.len(),
+            SettingsEditMode::LanguageInfo => 2,
+            SettingsEditMode::OptimizationSelector => {
+                crate::minecraft::optimization::OptimizationProfile::all().len()
+            }
+            // Text editor: no selectable rows.
+            SettingsEditMode::CustomJvmEditor => 0,
+            SettingsEditMode::None => 0,
+        }
     }
 
     /// Apply the current settings edit (Enter in edit mode)

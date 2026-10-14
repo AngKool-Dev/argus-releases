@@ -11,7 +11,7 @@
 #define MyAppName "EraLauncher"
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "EraLauncher Project"
-#define MyAppURL "https://github.com/EraLauncher/era-launcher"
+#define MyAppURL "https://github.com/AngKool-Dev/argus-releases"
 #define MyAppExe "era-launcher.exe"
 #define MyInstallerExe "era-launcher-web-installer.exe"
 
@@ -19,6 +19,7 @@
 AppId={{E8A5E3B0-1234-4321-ABCD-567890ABCDEF}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\EraLauncher
 DefaultGroupName={#MyAppName}
 OutputBaseFilename=era-launcher-web-setup
@@ -27,6 +28,8 @@ SolidCompression=yes
 PrivilegesRequired=lowest
 WizardStyle=modern
 LicenseFile=LICENSE
+SetupIconFile=assets\installer_icon.ico
+UninstallDisplayIcon={app}\{#MyAppExe}
 
 [Files]
 Source: "{#MyInstallerExe}"; DestDir: "{app}"; Flags: ignoreversion
